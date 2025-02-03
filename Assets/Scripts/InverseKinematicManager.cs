@@ -10,6 +10,8 @@ public class InverseKinematicManager : MonoBehaviour
 
     public float DistanceThreshold;
 
+    public int IKMode;
+
     private float[] angles;
 
     private void Awake()
@@ -34,9 +36,19 @@ public class InverseKinematicManager : MonoBehaviour
             foreach (RobotJoint j in Joints)
                 Debug.Log("(" + j.name + ")" + " Global Position: " + j.transform.position);
 
-        InverseKinematics(Target.position, angles);
-        for (int i = 0; i < Joints.Length; i++)
-            Joints[i].transform.localRotation = Quaternion.AngleAxis(angles[i], Joints[i].AllowedRotationalAxis);
+        if (IKMode == 0)
+        {
+            InverseKinematics(Target.position, angles);
+            for (int i = 0; i < Joints.Length; i++)
+                Joints[i].transform.localRotation = Quaternion.AngleAxis(angles[i], Joints[i].AllowedRotationalAxis);
+        }
+        else
+        {
+            // Debug.Log("TODO: Implement FABRIK here");
+            // if (Input.GetKeyDown(KeyCode.T))
+            // FABRIK(Target.position);
+            RobloxFABRIK(Target.position);
+        }
     }
 
     // This function essentially calculate the global position of the last joint after accounting all the rotation
@@ -89,6 +101,125 @@ public class InverseKinematicManager : MonoBehaviour
             angles[i] = Mathf.Clamp(angles[i], Joints[i].MinAngle, Joints[i].MaxAngle);
 
             if (DistanceFromTarget(target, angles) < DistanceThreshold) return;
+        }
+    }
+
+    public void FABRIK(Vector3 target)
+    {
+        float jointSum = 0.0f;
+        float[] jointDistances = new float[Joints.Length];
+        for (int i = 0; i < jointDistances.Length - 1; i++)
+        {
+            jointDistances[i] = Mathf.Abs((Joints[i + 1].transform.position - Joints[i].transform.position).magnitude);
+            jointSum += jointDistances[i];
+        }
+
+        float targetDistance = Mathf.Abs((Joints[0].transform.position - target).magnitude);
+
+        if (targetDistance > jointSum)
+            // Debug.Log("Unreachable");
+            // Target is unreachable
+        {
+            for (int i = 0; i < jointDistances.Length - 1; i++)
+            {
+                float r = Mathf.Abs((target - Joints[i].transform.position).magnitude);
+                float lambda = jointDistances[i] / r;
+
+                // Find new joint positions
+                Joints[i + 1].transform.position = (1.0f - lambda) * Joints[i].transform.position + lambda * target;
+            }
+        }
+        else
+        {
+            Vector3 b = Joints[0].transform.position;
+            float tipDistance = Mathf.Abs((Joints[Joints.Length - 1].transform.position - target).magnitude);
+            if (tipDistance < DistanceThreshold) return;
+
+            Joints[Joints.Length - 1].transform.position = target;
+            for (int i = Joints.Length - 2; i >= 0; i--)
+            {
+                float r = Mathf.Abs((Joints[i + 1].transform.position - Joints[i].transform.position).magnitude);
+                float lambda = jointDistances[i] / r;
+
+                Joints[i].transform.position = (1f - lambda) * Joints[i + 1].transform.position +
+                                               lambda * Joints[i].transform.position;
+            }
+
+            // Stage 2: Backward Reaching
+            Joints[0].transform.position = b;
+            for (int i = 0; i < Joints.Length - 1; i++)
+            {
+                float r = Mathf.Abs((Joints[i + 1].transform.position - Joints[i].transform.position).magnitude);
+                float lambda = jointDistances[i] / r;
+
+                Joints[i + 1].transform.position = (1.0f - lambda) * Joints[i].transform.position +
+                                                   lambda * Joints[i + 1].transform.position;
+            }
+        }
+    }
+
+    public void RobloxFABRIK(Vector3 target)
+    {
+        float jointSum = 0.0f;
+        float[] jointDistances = new float[Joints.Length];
+        for (int i = 0; i < jointDistances.Length - 1; i++)
+        {
+            jointDistances[i] = Mathf.Abs((Joints[i + 1].transform.position - Joints[i].transform.position).magnitude);
+            jointSum += jointDistances[i];
+        }
+
+        float targetDistance = Mathf.Abs((Joints[0].transform.position - target).magnitude);
+
+        if (targetDistance > jointSum)
+        {
+            // Target is unreachable
+            for (int i = 0; i < jointDistances.Length - 1; i++)
+            {
+                Transform j = Joints[i].transform;
+                Vector3 targetDir = (target - j.position).normalized;
+                Vector3 nextPosition = targetDir * jointDistances[i] + Joints[i].transform.position;
+
+                Joints[i + 1].transform.position = nextPosition;
+                Joints[i].transform.localRotation = Quaternion.LookRotation(targetDir, transform.up);
+            }
+
+            Vector3 t = (target - Joints[Joints.Length - 1].transform.position).normalized;
+            Joints[Joints.Length - 1].transform.localRotation = Quaternion.LookRotation(t, transform.up);
+        }
+        else
+        {
+            Vector3 b = Joints[0].transform.position;
+            Joints[Joints.Length - 1].transform.position = target;
+            // Forward Reaching
+            for (int i = Joints.Length - 2; i >= 0; i--)
+            {
+                Transform prevJoint = Joints[i + 1].transform;
+                Transform nextJoint = Joints[i].transform;
+
+                Vector3 newDir = (nextJoint.position - prevJoint.position).normalized;
+                Vector3 nextPosition = newDir * jointDistances[i] + prevJoint.transform.position;
+
+                Joints[i].transform.position = nextPosition;
+            }
+
+            Joints[0].transform.position = b;
+            // Backward Reaching
+            for (int i = 0; i < Joints.Length - 1; i++)
+            {
+                Transform nextJoint = Joints[i + 1].transform;
+                Transform prevJoint = Joints[i].transform;
+
+                Vector3 newDir = (nextJoint.position - prevJoint.position).normalized;
+                Vector3 nextPosition = newDir * jointDistances[i] + prevJoint.transform.position;
+
+                Joints[i + 1].transform.position = nextPosition;
+
+                // Look at the next joint
+                Joints[i].transform.localRotation = Quaternion.LookRotation(newDir, transform.up);
+            }
+
+            // Vector3 targetDir = (target - Joints[Joints.Length - 1].transform.position).normalized;
+            Joints[Joints.Length - 1].transform.localRotation = Quaternion.LookRotation(target, transform.up);
         }
     }
 }
