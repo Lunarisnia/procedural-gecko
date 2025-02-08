@@ -13,12 +13,16 @@ public class InverseKinematicManager : MonoBehaviour
     public int IKMode;
 
     private float[] angles;
+    private float[] jointDistances;
+
+    private float maxDistance;
 
     private void Awake()
     {
         angles = new float[Joints.Length];
         RobotJoint[] joints = GetComponentsInChildren<RobotJoint>();
         Joints = joints;
+        Init();
     }
 
     // Update is called once per frame
@@ -52,7 +56,18 @@ public class InverseKinematicManager : MonoBehaviour
         }
         else
         {
-            LocalFABRIK(Target.position);
+            FastFABRIK(Target.position);
+        }
+    }
+
+    private void Init()
+    {
+        maxDistance = 0.0f;
+        jointDistances = new float[Joints.Length - 1];
+        for (int i = 0; i < jointDistances.Length; i++)
+        {
+            jointDistances[i] = (Joints[i + 1].transform.position - Joints[i].transform.position).magnitude;
+            maxDistance += jointDistances[i];
         }
     }
 
@@ -227,79 +242,55 @@ public class InverseKinematicManager : MonoBehaviour
         }
     }
 
-    // NOTE: I am stuck with how to account for parenting
-    public void LocalFABRIK(Vector3 target)
+    private void FastFABRIK(Vector3 target)
     {
-        // Debug.Log("GlobalPosition: " + Joints[Joints.Length - 1].transform.position + "-- Local Position: " +
-        //           Joints[Joints.Length - 1].transform.worldToLocalMatrix *
-        //           Joints[Joints.Length - 1].transform.position);
-        // Debug.Log("LocalPosition: " + Joints[Joints.Length - 1].transform.localPosition +
-        //           "Global Position (CONVERT): " + Joints[Joints.Length - 2].transform
-        //               .InverseTransformPoint(Joints[Joints.Length - 1].transform.position) +
-        //           "Global Position (REAL): " + Joints[Joints.Length - 1].transform.position);
-        float jointSum = 0.0f;
-        float[] jointDistances = new float[Joints.Length];
-        for (int i = 0; i < jointDistances.Length - 1; i++)
-        {
-            jointDistances[i] = Mathf.Abs((Joints[i + 1].transform.position - Joints[i].transform.position).magnitude);
-            jointSum += jointDistances[i];
-        }
+        Vector3[] positions = new Vector3[Joints.Length];
+        for (int i = 0; i < positions.Length; i++) positions[i] = Joints[i].transform.position;
 
-        float targetDistance = Mathf.Abs((Joints[0].transform.position - target).magnitude);
-
-        if (targetDistance > jointSum)
+        float targetDistance = (Joints[0].transform.position - target).magnitude;
+        if (targetDistance > maxDistance)
+            // Unreachable
         {
-            // Target is unreachable
-            for (int i = 0; i < jointDistances.Length - 1; i++)
+            for (int i = 0; i < jointDistances.Length; i++)
             {
                 Transform j = Joints[i].transform;
                 Vector3 targetDir = (target - j.position).normalized;
-                Vector3 nextPosition = targetDir * jointDistances[i] + Joints[i].transform.position;
+                Vector3 nextPosition = targetDir + Joints[i].transform.position * jointDistances[i];
 
-                Joints[i + 1].transform.position = nextPosition;
-                Joints[i].transform.localRotation = Quaternion.LookRotation(targetDir, transform.up);
+
+                positions[i + 1] = nextPosition;
             }
-
-            Vector3 t = (target - Joints[Joints.Length - 1].transform.position).normalized;
-            Joints[Joints.Length - 1].transform.localRotation = Quaternion.LookRotation(t, transform.up);
         }
         else
         {
             Vector3 b = Joints[0].transform.position;
-            Joints[Joints.Length - 1].transform.localPosition =
-                Joints[Joints.Length - 2].transform.InverseTransformPoint(target);
+            positions[Joints.Length - 1] = target;
             // Forward Reaching
             for (int i = Joints.Length - 2; i >= 0; i--)
             {
-                Transform prevJoint = Joints[i + 1].transform;
-                Transform nextJoint = Joints[i].transform;
+                Vector3 prevJoint = positions[i + 1];
+                Vector3 nextJoint = positions[i];
 
-                Vector3 newDir = (nextJoint.position - prevJoint.position).normalized;
-                Vector3 nextPosition = newDir * jointDistances[i] + prevJoint.transform.position;
+                Vector3 newDir = (nextJoint - prevJoint).normalized;
+                Vector3 nextPosition = newDir * jointDistances[i] + prevJoint;
 
-                if (i > 0)
-                    Joints[i].transform.localPosition = Joints[i - 1].transform.InverseTransformPoint(nextPosition);
-                else
-                    Joints[i].transform.position = nextPosition;
+                positions[i] = nextPosition;
             }
 
-            // Joints[0].transform.position = b;
-            // // Backward Reaching
-            // for (int i = 0; i < Joints.Length - 1; i++)
-            // {
-            //     Transform nextJoint = Joints[i + 1].transform;
-            //     Transform prevJoint = Joints[i].transform;
-            //
-            //     Vector3 newDir = (nextJoint.position - prevJoint.position).normalized;
-            //     Vector3 nextPosition = newDir * jointDistances[i] + prevJoint.transform.position;
-            //
-            //     Joints[i + 1].transform.position = nextPosition;
-            //
-            //     // Look at the next joint
-            //     Joints[i].transform.localRotation = Quaternion.LookRotation(newDir, transform.up);
-            // }
-            //
-            Joints[Joints.Length - 1].transform.localRotation = Quaternion.LookRotation(target, transform.up);
+            positions[0] = b;
+            // Backward Reaching
+            for (int i = 0; i < Joints.Length - 1; i++)
+            {
+                Vector3 nextJoint = positions[i + 1];
+                Vector3 prevJoint = positions[i];
+
+                Vector3 newDir = (nextJoint - prevJoint).normalized;
+                Vector3 nextPosition = newDir * jointDistances[i] + prevJoint;
+
+                positions[i + 1] = nextPosition;
+            }
         }
+
+        for (int i = 0; i < Joints.Length; i++) Joints[i].transform.position = positions[i];
     }
 }
