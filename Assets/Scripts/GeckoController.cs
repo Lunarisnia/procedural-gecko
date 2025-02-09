@@ -2,6 +2,8 @@ using UnityEngine;
 
 public class GeckoController : MonoBehaviour
 {
+    public Transform HipBone;
+
     [SerializeField] private Transform target;
 
     // Gecko's Neck
@@ -25,6 +27,7 @@ public class GeckoController : MonoBehaviour
     private void Update()
     {
         if (Input.GetKeyDown(KeyCode.Z)) zeroed = !zeroed;
+        // HipBone.position += Vector3.forward * 0.001f;
     }
 
     private void LateUpdate()

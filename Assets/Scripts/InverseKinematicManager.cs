@@ -7,6 +7,8 @@ public class InverseKinematicManager : MonoBehaviour
     public float LearningRate = 0.01f;
 
     public Transform Target;
+    public Transform Pole;
+
 
     public float DistanceThreshold;
 
@@ -16,6 +18,11 @@ public class InverseKinematicManager : MonoBehaviour
     private float[] jointDistances;
 
     private float maxDistance;
+
+    private Vector3[] StartDirectionSucc;
+    private Quaternion[] StartRotationBone;
+    private Quaternion StartRotationRoot;
+    private Quaternion StartRotationTarget;
 
     private void Awake()
     {
@@ -63,11 +70,25 @@ public class InverseKinematicManager : MonoBehaviour
     private void Init()
     {
         maxDistance = 0.0f;
+        StartDirectionSucc = new Vector3[Joints.Length];
+        StartRotationBone = new Quaternion[Joints.Length];
+
+        StartRotationTarget = Target.rotation;
+
         jointDistances = new float[Joints.Length - 1];
         for (int i = 0; i < jointDistances.Length; i++)
         {
             jointDistances[i] = (Joints[i + 1].transform.position - Joints[i].transform.position).magnitude;
             maxDistance += jointDistances[i];
+        }
+
+        for (int i = Joints.Length - 1; i >= 0; i--)
+        {
+            Transform current = Joints[i].transform;
+            StartRotationBone[i] = current.rotation;
+            if (i == Joints.Length - 1) StartDirectionSucc[i] = Target.position - current.position;
+            else
+                StartDirectionSucc[i] = Joints[i + 1].transform.position - current.position;
         }
     }
 
@@ -247,6 +268,9 @@ public class InverseKinematicManager : MonoBehaviour
         Vector3[] positions = new Vector3[Joints.Length];
         for (int i = 0; i < positions.Length; i++) positions[i] = Joints[i].transform.position;
 
+        Quaternion rootRot = Quaternion.identity;
+        Quaternion rootRotDiff = rootRot * Quaternion.Inverse(StartRotationRoot);
+
         float targetDistance = (Joints[0].transform.position - target).magnitude;
         if (targetDistance > maxDistance)
             // Unreachable
@@ -255,7 +279,7 @@ public class InverseKinematicManager : MonoBehaviour
             {
                 Transform j = Joints[i].transform;
                 Vector3 targetDir = (target - j.position).normalized;
-                Vector3 nextPosition = targetDir + Joints[i].transform.position * jointDistances[i];
+                Vector3 nextPosition = targetDir * jointDistances[i] + Joints[i].transform.position;
 
 
                 positions[i + 1] = nextPosition;
@@ -291,6 +315,28 @@ public class InverseKinematicManager : MonoBehaviour
             }
         }
 
-        for (int i = 0; i < Joints.Length; i++) Joints[i].transform.position = positions[i];
+        if (Pole != null)
+            for (int i = 1; i < positions.Length - 1; i++)
+            {
+                Plane plane = new(positions[i + 1] - positions[i - 1], positions[i - 1]);
+                Vector3 projectedPole = plane.ClosestPointOnPlane(Pole.position);
+                Vector3 projectedBone = plane.ClosestPointOnPlane(positions[i]);
+                float angle = Vector3.SignedAngle(projectedBone - positions[i - 1], projectedPole - positions[i - 1],
+                    plane.normal);
+                positions[i] = Quaternion.AngleAxis(angle, plane.normal) * (positions[i] - positions[i - 1]) +
+                               positions[i - 1];
+            }
+
+        for (int i = 0; i < Joints.Length; i++)
+        {
+            if (i == positions.Length - 1)
+                Joints[i].transform.rotation =
+                    Target.rotation * Quaternion.Inverse(StartRotationTarget) * StartRotationBone[i];
+            else
+                Joints[i].transform.rotation =
+                    Quaternion.FromToRotation(StartDirectionSucc[i], positions[i + 1] - positions[i]) *
+                    StartRotationBone[i];
+            Joints[i].transform.position = positions[i];
+        }
     }
 }
